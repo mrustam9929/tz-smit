@@ -1,0 +1,91 @@
+version: '3.9'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: ./deploy/Dockerfile
+      target: prod
+    image: tz_smit:${TZ_SMIT_VERSION:-latest}
+    restart: always
+    env_file:
+    - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      TZ_SMIT_HOST: 0.0.0.0
+      TZ_SMIT_DB_HOST: tz_smit-db
+      TZ_SMIT_DB_PORT: 5432
+      TZ_SMIT_DB_USER: tz_smit
+      TZ_SMIT_DB_PASS: tz_smit
+      TZ_SMIT_DB_BASE: tz_smit
+      TESTKAFKA_KAFKA_BOOTSTRAP_SERVERS: '["tz_smit-kafka:9092"]'
+
+  db:
+    image: postgres:13.8-bullseye
+    hostname: tz_smit-db
+    environment:
+      POSTGRES_PASSWORD: "tz_smit"
+      POSTGRES_USER: "tz_smit"
+      POSTGRES_DB: "tz_smit"
+    volumes:
+    - tz_smit-db-data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: pg_isready -U tz_smit
+      interval: 2s
+      timeout: 3s
+      retries: 40
+
+  migrator:
+    image: tz_smit:${TZ_SMIT_VERSION:-latest}
+    restart: "no"
+    command: alembic upgrade head
+    environment:
+      TZ_SMIT_DB_HOST: tz_smit-db
+      TZ_SMIT_DB_PORT: 5432
+      TZ_SMIT_DB_USER: tz_smit
+      TZ_SMIT_DB_PASS: tz_smit
+      TZ_SMIT_DB_BASE: tz_smit
+    depends_on:
+      db:
+        condition: service_healthy
+
+  zookeeper:
+    image: "bitnami/zookeeper:3.7.1"
+    hostname: "tz_smit-zookeeper"
+    environment:
+      ALLOW_ANONYMOUS_LOGIN: "yes"
+      ZOO_LOG_LEVEL: "ERROR"
+    healthcheck:
+      test: zkServer.sh status
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  kafka:
+    image: "bitnami/kafka:3.2.0"
+    hostname: "tz_smit-kafka"
+    environment:
+      KAFKA_BROKER_ID: "1"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://0.0.0.0:9092"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://tz_smit-kafka:9092"
+      KAFKA_CFG_ZOOKEEPER_CONNECT: "tz_smit-zookeeper:2181"
+    healthcheck:
+      test: kafka-topics.sh --list --bootstrap-server localhost:9092
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+
+
+volumes:
+  tz_smit-db-data:
+    name: tz_smit-db-data
